@@ -2871,6 +2871,47 @@ class TestWebVTT(unittest.TestCase):
             'That\'s amore'
             )
 
+    def test_inline_timestamps(self):
+        vtt = webvtt.read(PATH_TO_SAMPLES / 'inline_timestamps.vtt')
+
+        caption = vtt.captions[0]
+        self.assertEqual([segment.text for segment in caption.segments],
+                         ['One ', 'two ', 'three'])
+        self.assertEqual(
+            [(str(segment.start), str(segment.end))
+             for segment in caption.segments],
+            [('00:00:00.000', '00:00:01.000'),
+             ('00:00:01.000', '00:00:02.000'),
+             ('00:00:02.000', '00:00:03.000')]
+            )
+
+        caption = vtt.captions[1]
+        self.assertEqual([segment.text for segment in caption.segments],
+                         ['<v Bob><c.colorE5E5E5>One</c> ',
+                          '<i>two</i> ',
+                          '<b>three</b></v>'])
+        self.assertEqual(caption.text, 'One two three')
+        self.assertEqual(caption.voices, ['Bob'])
+
+    def test_inline_timestamps_round_trip(self):
+        vtt = webvtt.read(PATH_TO_SAMPLES / 'inline_timestamps.vtt')
+        for caption in vtt.captions:
+            caption.segments = caption.segments
+        self.assertEqual(webvtt.from_string(vtt.content), vtt)
+
+    def test_inline_timestamps_modified_round_trip(self):
+        vtt = webvtt.read(PATH_TO_SAMPLES / 'inline_timestamps.vtt')
+        segments = vtt.captions[0].segments
+        segments[1].start = 1.5
+        vtt.captions[0].segments = segments
+        self.assertEqual(vtt.captions[0].raw_text,
+                         'One <00:02.500>two <00:00:03.000>three')
+        self.assertEqual(webvtt.from_string(vtt.content), vtt)
+        self.assertEqual(
+            [segment.text for segment in vtt.captions[0].segments],
+            ['One ', 'two ', 'three']
+            )
+
     def test_parse_captions_with_bom(self):
         vtt = webvtt.read(PATH_TO_SAMPLES / 'captions_with_bom.vtt')
         self.assertEqual(len(vtt.captions), 4)

@@ -479,12 +479,26 @@ def _iter_cue_text_tokens(
     """
     Iterate the text and the cue tags of cue text.
 
+    :param text: the cue text
+    :returns: tuples of the text or the tag content and true for a tag
+    """
+    for token, is_tag, _ in _iter_cue_text_parts(text):
+        yield token, is_tag
+
+
+def _iter_cue_text_parts(
+        text: str
+        ) -> Generator[tuple[str, bool, int], None, None]:
+    """
+    Iterate the text and the cue tags of cue text, with their positions.
+
     A ``<`` without a ``>`` after it is part of the text. The scan stops at
     the first one, as no later ``<`` in the text has a ``>`` after it
     either, which keeps it linear in the length of the text.
 
     :param text: the cue text
-    :returns: tuples of the text or the tag content and true for a tag
+    :returns: tuples of the text or the tag content, true for a tag, and
+        the offset where the token starts in the text
     """
     pos = 0
     while True:
@@ -495,11 +509,11 @@ def _iter_cue_text_tokens(
         if end < 0:
             break
         if start > pos:
-            yield text[pos:start], False
-        yield text[start + 1:end], True
+            yield text[pos:start], False, pos
+        yield text[start + 1:end], True, start
         pos = end + 1
     if pos < len(text):
-        yield text[pos:], False
+        yield text[pos:], False, pos
 
 
 def _strip_cue_text_tags(text: str) -> str:
@@ -862,6 +876,69 @@ def _to_cue_settings(
     return CueSettings.from_string(value)
 
 
+def _inline_timestamp(token: str) -> Timestamp | None:
+    """
+    Return the timestamp of an inline timestamp tag, or None.
+
+    :param token: the content of a cue tag
+    :returns: the timestamp, or None when the tag is not shaped as a
+        timestamp, such as a ``c``, ``i``, ``b`` or ``v`` tag
+
+    :raises MalformedCaptionError: if the tag is shaped as a timestamp but
+        its values are not valid, as in ``<00:70.000>``
+    """
+    if not Timestamp.PATTERN.fullmatch(token):
+        return None
+    return Timestamp.from_string(token)
+
+
+def _format_inline_timestamp(milliseconds: int) -> str:
+    """
+    Return a time in milliseconds as an inline timestamp tag value.
+
+    The hours are left out when they are zero, as is usual in karaoke
+    captions, e.g. ``00:17.500``.
+
+    :param milliseconds: the time in milliseconds
+    :returns: the timestamp in ``[hh:]mm:ss.mmm`` format
+    """
+    timestamp = Timestamp._from_milliseconds(milliseconds)
+    if timestamp.hours:
+        return str(timestamp)
+    return (f'{timestamp.minutes:02d}:{timestamp.seconds:02d}'
+            f'.{timestamp.milliseconds:03d}')
+
+
+@dataclass
+class CueSegment:
+    """
+    A segment of the text of a caption between inline timestamp tags.
+
+    The text of a cue can have inline timestamp tags, as in karaoke
+    captions where the words are shown one by one. `Caption.segments`
+    returns the segments of the text between them, and setting it writes
+    them back.
+
+    :param text: the raw text of the segment, including the cue tags other
+        than the timestamp tags, which it keeps in their place
+    :param start: the start of the segment relative to the start of the
+        caption, as a `Timestamp`
+    :param end: the end of the segment relative to the start of the
+        caption: the start of the next segment, or the end of the caption
+        for the last one
+    :param tag: the timestamp tag that starts the segment, as written, or
+        None for the first segment, which starts with the caption
+    :param position: the offset of the timestamp tag in ``raw_text``, or
+        None for the first segment
+    """
+
+    text: str
+    start: Timestamp
+    end: Timestamp
+    tag: str | None = None
+    position: int | None = None
+
+
 class Caption:
     """Representation of a caption."""
 
@@ -1110,6 +1187,159 @@ class Caption:
                 if match:
                     voices.append(_normalize_voice(match.group(1)))
         return voices
+
+    @property
+    def segments(self) -> list[CueSegment]:
+        """
+        Return the segments of the text between the inline timestamp tags.
+
+        The text of a cue can have inline timestamp tags, as in karaoke
+        captions where the words are shown one by one. Each `CueSegment`
+        has the raw text of a segment, with the cue tags other than the
+        timestamp tags kept in their place, its start and end relative to
+        the start of the caption, and the timestamp tag that starts it as
+        written and its position in ``raw_text``. A caption without inline
+        timestamp tags has a single segment with all its text.
+
+        The segments are new objects, so changing them does not change the
+        caption: set ``segments`` to write the changes back.
+
+        :returns: the list of `CueSegment`, in the order of the text
+
+        :raises MalformedCaptionError: if an inline timestamp is shaped as
+            a timestamp but its values are not valid, is not within the
+            start and end of the caption, or is not after the previous one
+        """
+        start_ms = self.start_in_milliseconds
+        duration = max(self.end_in_milliseconds - start_ms, 0)
+
+        segments: list[CueSegment] = []
+        chunks: list[str] = []
+        tag: str | None = None
+        position: int | None = None
+        current = 0
+
+        for token, is_tag, offset in _iter_cue_text_parts(self.raw_text):
+            timestamp = _inline_timestamp(token) if is_tag else None
+            if timestamp is None:
+                chunks.append(f'<{token}>' if is_tag else token)
+                continue
+
+            relative = timestamp.in_milliseconds() - start_ms
+            if relative <= current:
+                raise MalformedCaptionError(
+                    f'Inline timestamp <{token}> is not after '
+                    + ('the start of the caption' if not segments else
+                       'the previous one')
+                    )
+            if relative >= duration:
+                raise MalformedCaptionError(
+                    f'Inline timestamp <{token}> is not within '
+                    'the caption'
+                    )
+            segments.append(CueSegment(
+                text=''.join(chunks),
+                start=Timestamp._from_milliseconds(current),
+                end=Timestamp(),
+                tag=tag,
+                position=position
+                ))
+            chunks = []
+            tag = token
+            position = offset
+            current = relative
+
+        segments.append(CueSegment(
+            text=''.join(chunks),
+            start=Timestamp._from_milliseconds(current),
+            end=Timestamp._from_milliseconds(duration),
+            tag=tag,
+            position=position
+            ))
+        for earlier, later in zip(segments, segments[1:]):
+            earlier.end = Timestamp._from_milliseconds(
+                later.start.in_milliseconds()
+                )
+        return segments
+
+    @segments.setter
+    def segments(self, segments: Iterable[CueSegment]) -> None:
+        """
+        Set the text from segments, writing back the inline timestamp tags.
+
+        The text of each segment is written in the order of the segments,
+        with a timestamp tag before each one after the first, so the cue
+        tags in the text stay in their place. The tag of a segment is kept
+        as written when its start is unchanged, and is written in
+        ``[hh:]mm:ss.mmm`` format otherwise. The first segment starts at
+        the start of the caption, and the end of each segment is the start
+        of the next one, and the end of the caption for the last one, so
+        only the text and the start of the segments are read. The text is
+        left unchanged when a segment is not valid.
+
+        :param segments: the segments, as returned by ``segments``, each
+            start a timestamp string, a `Timestamp`, a number of seconds or
+            a ``timedelta`` relative to the start of the caption
+
+        :raises MalformedCaptionError: if the first segment does not start
+            at the start of the caption, a start is not valid, is not
+            within the start and end of the caption, or is not after the
+            previous one
+        """
+        start_ms = self.start_in_milliseconds
+        duration = max(self.end_in_milliseconds - start_ms, 0)
+
+        parts = []
+        previous = 0
+        for index, segment in enumerate(segments):
+            relative = _to_timestamp(segment.start).in_milliseconds()
+            if index == 0:
+                if relative != 0:
+                    raise MalformedCaptionError(
+                        'The first segment does not start at the start '
+                        'of the caption'
+                        )
+            else:
+                if relative <= previous:
+                    raise MalformedCaptionError(
+                        f'The start of segment {index + 1} is not after '
+                        'the previous one'
+                        )
+                if relative >= duration:
+                    raise MalformedCaptionError(
+                        f'The start of segment {index + 1} is not within '
+                        'the caption'
+                        )
+                parts.append(self._segment_tag(segment, relative))
+            parts.append(segment.text)
+            previous = relative
+
+        self.text = ''.join(parts)
+
+    def _segment_tag(self, segment: CueSegment, relative: int) -> str:
+        """
+        Return the timestamp tag of a segment to write before its text.
+
+        The tag is kept as written when it is the time of the segment, so
+        the text is written back unchanged when the segment is unchanged.
+
+        :param segment: the segment
+        :param relative: the start of the segment in milliseconds relative
+            to the start of the caption
+        :returns: the tag, with the angle brackets
+        """
+        if segment.tag is not None:
+            try:
+                written = Timestamp.from_string(segment.tag)
+            except MalformedCaptionError:
+                pass
+            else:
+                if (written.in_milliseconds() ==
+                        self.start_in_milliseconds + relative):
+                    return f'<{segment.tag}>'
+        return '<{}>'.format(
+            _format_inline_timestamp(self.start_in_milliseconds + relative)
+            )
 
 
 def _caption_lines(

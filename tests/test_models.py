@@ -6,7 +6,7 @@ import unittest
 import unittest.mock
 
 from webvtt.models import (
-    Timestamp, Caption, CueSettings, ParseIssue, Region, Style
+    Timestamp, Caption, CueSegment, CueSettings, ParseIssue, Region, Style
     )
 from webvtt.errors import MalformedCaptionError, MalformedRegionError
 
@@ -1071,6 +1071,228 @@ class TestCaption(unittest.TestCase):
                 caption.text,
                 re.sub('<.*?>', '', raw_text, flags=re.DOTALL)
             )
+
+
+class TestCaptionSegments(unittest.TestCase):
+
+    def test_no_inline_timestamps(self):
+        caption = Caption('00:00:01.000', '00:00:04.000', 'Hello there!')
+        segments = caption.segments
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].text, 'Hello there!')
+        self.assertEqual(str(segments[0].start), '00:00:00.000')
+        self.assertEqual(str(segments[0].end), '00:00:03.000')
+        self.assertIsNone(segments[0].tag)
+        self.assertIsNone(segments[0].position)
+
+    def test_empty_caption(self):
+        segments = Caption('00:00:01.000', '00:00:04.000').segments
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].text, '')
+
+    def test_three_words(self):
+        caption = Caption('00:00:01.000', '00:00:04.000',
+                          'One <00:00:02.000>two <00:00:03.000>three')
+        segments = caption.segments
+        self.assertEqual(len(segments), 3)
+        self.assertEqual([segment.text for segment in segments],
+                         ['One ', 'two ', 'three'])
+        self.assertEqual(
+            [(str(segment.start), str(segment.end)) for segment in segments],
+            [('00:00:00.000', '00:00:01.000'),
+             ('00:00:01.000', '00:00:02.000'),
+             ('00:00:02.000', '00:00:03.000')]
+            )
+        self.assertEqual([segment.tag for segment in segments],
+                         [None, '00:00:02.000', '00:00:03.000'])
+        self.assertEqual([segment.position for segment in segments],
+                         [None, 4, 22])
+
+    def test_mixed_with_cue_tags(self):
+        raw_text = ('<v Bob><c.colorE5E5E5>One</c> <00:00:06.500><i>two</i> '
+                    '<00:00:08.000><b>three</b></v>')
+        caption = Caption('00:00:05.000', '00:00:09.000', raw_text)
+        segments = caption.segments
+        self.assertEqual([segment.text for segment in segments],
+                         ['<v Bob><c.colorE5E5E5>One</c> ',
+                          '<i>two</i> ',
+                          '<b>three</b></v>'])
+        self.assertEqual(
+            [(str(segment.start), str(segment.end)) for segment in segments],
+            [('00:00:00.000', '00:00:01.500'),
+             ('00:00:01.500', '00:00:03.000'),
+             ('00:00:03.000', '00:00:04.000')]
+            )
+        self.assertEqual(caption.text, 'One two three')
+        self.assertEqual(caption.voices, ['Bob'])
+
+    def test_round_trip(self):
+        for raw_text in ('One <00:00:02.000>two <00:00:03.000>three',
+                         '<v Bob><c.colorE5E5E5>One</c> <00:00:06.500>'
+                         '<i>two</i> <00:00:08.000><b>three</b></v>',
+                         'One <01:02:03.500>two',
+                         'No timestamps here',
+                         ''):
+            with self.subTest(raw_text=raw_text):
+                caption = Caption('00:00:01.000', '01:02:04.000', raw_text)
+                caption.segments = caption.segments
+                self.assertEqual(caption.raw_text, raw_text)
+
+    def test_set_segments_modified(self):
+        caption = Caption('00:00:01.000', '00:00:04.000',
+                          'One <00:00:02.000>two <00:00:03.000>three')
+        segments = caption.segments
+        segments[1].text = '<b>TWO</b> '
+        segments[2].start = Timestamp(0, 0, 2, 500)
+        caption.segments = segments
+        self.assertEqual(caption.raw_text,
+                         'One <00:00:02.000><b>TWO</b> <00:03.500>three')
+
+    def test_set_segments_start_of_other_types(self):
+        caption = Caption('00:00:01.000', '00:00:04.000',
+                          'One <00:00:02.000>two <00:00:03.000>three')
+        for start in ('00:00:02.500', 2.5, datetime.timedelta(seconds=2.5)):
+            with self.subTest(start=start):
+                segments = caption.segments
+                segments[2].start = start
+                caption.segments = segments
+                self.assertEqual(
+                    caption.raw_text,
+                    'One <00:00:02.000>two <00:03.500>three'
+                    )
+
+    def test_set_segments_removes_timestamps_with_one_segment(self):
+        caption = Caption('00:00:01.000', '00:00:04.000',
+                          'One <00:00:02.000>two <00:00:03.000>three')
+        caption.segments = [CueSegment(
+            text='One two three',
+            start=Timestamp(),
+            end=Timestamp(0, 0, 3, 0)
+            )]
+        self.assertEqual(caption.raw_text, 'One two three')
+
+    def test_set_segments_empty(self):
+        caption = Caption('00:00:01.000', '00:00:04.000',
+                          'One <00:00:02.000>two')
+        caption.segments = []
+        self.assertEqual(caption.raw_text, '')
+
+    def test_empty_segment(self):
+        caption = Caption('00:00:01.000', '00:00:04.000',
+                          'One <00:00:02.000><00:00:03.000>three')
+        segments = caption.segments
+        self.assertEqual([segment.text for segment in segments],
+                         ['One ', '', 'three'])
+        self.assertEqual(str(segments[1].start), '00:00:01.000')
+        self.assertEqual(str(segments[1].end), '00:00:02.000')
+        caption.segments = segments
+        self.assertEqual(caption.raw_text,
+                         'One <00:00:02.000><00:00:03.000>three')
+
+    def test_segments_across_lines(self):
+        raw_text = 'One\ntwo <00:00:02.000>three\nfour'
+        caption = Caption('00:00:01.000', '00:00:04.000', raw_text)
+        segments = caption.segments
+        self.assertEqual([segment.text for segment in segments],
+                         ['One\ntwo ', 'three\nfour'])
+        self.assertEqual(segments[1].position, 8)
+        caption.segments = segments
+        self.assertEqual(caption.raw_text, raw_text)
+
+    def test_unclosed_tag_is_text(self):
+        caption = Caption('00:00:01.000', '00:00:04.000', 'One <00:00:02.000')
+        segments = caption.segments
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].text, 'One <00:00:02.000')
+
+    def test_not_a_timestamp_tag(self):
+        caption = Caption('00:00:01.000', '00:00:04.000',
+                          'One <00:00:02.0005><c>two')
+        segments = caption.segments
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].text, 'One <00:00:02.0005><c>two')
+
+    def test_bad_timestamp_tag(self):
+        caption = Caption('00:00:01.000', '00:00:04.000', 'One <00:70.000>two')
+        with self.assertRaises(MalformedCaptionError):
+            caption.segments
+
+    def test_repeated_and_out_of_order_timestamps(self):
+        for raw_text in ('One <00:00:02.000>two <00:00:02.000>three',
+                         'One <00:00:03.000>two <00:00:02.000>three'):
+            with self.subTest(raw_text=raw_text):
+                caption = Caption('00:00:01.000', '00:00:04.000', raw_text)
+                with self.assertRaises(MalformedCaptionError):
+                    caption.segments
+
+    def test_timestamp_out_of_bounds(self):
+        for raw_text in ('One <00:00:01.000>two',
+                         'One <00:00:00.500>two',
+                         'One <00:00:04.000>two',
+                         'One <00:00:05.000>two'):
+            with self.subTest(raw_text=raw_text):
+                caption = Caption('00:00:01.000', '00:00:04.000', raw_text)
+                with self.assertRaises(MalformedCaptionError):
+                    caption.segments
+
+    def test_timestamp_in_caption_without_duration(self):
+        caption = Caption('00:00:01.000', '00:00:01.000',
+                          'One <00:00:02.000>two')
+        with self.assertRaises(MalformedCaptionError):
+            caption.segments
+
+    def test_set_segments_first_not_at_start(self):
+        caption = Caption('00:00:01.000', '00:00:04.000', 'One two')
+        segments = caption.segments
+        segments[0].start = Timestamp(0, 0, 1, 0)
+        with self.assertRaises(MalformedCaptionError):
+            caption.segments = segments
+        self.assertEqual(caption.raw_text, 'One two')
+
+    def test_set_segments_not_increasing(self):
+        caption = Caption('00:00:01.000', '00:00:04.000',
+                          'One <00:00:02.000>two <00:00:03.000>three')
+        segments = caption.segments
+        segments[2].start = Timestamp(0, 0, 1, 0)
+        with self.assertRaises(MalformedCaptionError):
+            caption.segments = segments
+        self.assertEqual(caption.raw_text,
+                         'One <00:00:02.000>two <00:00:03.000>three')
+
+    def test_set_segments_out_of_bounds(self):
+        caption = Caption('00:00:01.000', '00:00:04.000',
+                          'One <00:00:02.000>two')
+        segments = caption.segments
+        segments[1].start = Timestamp(0, 0, 3, 0)
+        with self.assertRaises(MalformedCaptionError):
+            caption.segments = segments
+        self.assertEqual(caption.raw_text, 'One <00:00:02.000>two')
+
+    def test_set_segments_invalid_start(self):
+        caption = Caption('00:00:01.000', '00:00:04.000',
+                          'One <00:00:02.000>two')
+        segments = caption.segments
+        segments[1].start = 'not a time'
+        with self.assertRaises(MalformedCaptionError):
+            caption.segments = segments
+        self.assertEqual(caption.raw_text, 'One <00:00:02.000>two')
+
+    def test_segments_are_new_objects(self):
+        caption = Caption('00:00:01.000', '00:00:04.000',
+                          'One <00:00:02.000>two')
+        caption.segments[1].text = 'changed'
+        self.assertEqual(caption.raw_text, 'One <00:00:02.000>two')
+
+    def test_segment_equality_and_repr(self):
+        caption = Caption('00:00:01.000', '00:00:04.000',
+                          'One <00:00:02.000>two')
+        self.assertEqual(caption.segments, caption.segments)
+        self.assertEqual(
+            caption.segments[1],
+            CueSegment('two', Timestamp(0, 0, 1, 0), Timestamp(0, 0, 3, 0),
+                       tag='00:00:02.000', position=4)
+            )
+        self.assertNotEqual(caption.segments[0], caption.segments[1])
 
 
 class TestLinearTime(unittest.TestCase):

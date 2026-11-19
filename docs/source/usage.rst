@@ -41,6 +41,47 @@ leading and trailing ASCII whitespace removed and runs of ASCII whitespace
 collapsed to a single space.
 
 
+Inline timestamp tags
+---------------------
+
+The text of a cue can have inline timestamp tags, as in karaoke captions
+where the words are shown one by one. ``segments`` returns the text between
+them as `CueSegment` objects, each with its raw text, its start and end
+relative to the start of the caption, and the tag as written and its
+position in ``raw_text``. A caption without inline timestamp tags has a
+single segment with all its text.
+
+.. code-block:: python
+
+    caption = webvtt.Caption('00:00:01.000', '00:00:04.000',
+                             'One <00:00:02.000>two <00:00:03.000>three')
+    for segment in caption.segments:
+        print(segment.text, segment.start, segment.end)
+    # One  00:00:00.000 00:00:01.000
+    # two  00:00:01.000 00:00:02.000
+    # three 00:00:02.000 00:00:03.000
+
+The segments can be changed and written back by setting ``segments``: the
+text of each segment is written in order, with a timestamp tag before each
+one after the first. A tag is kept as written when the start of its segment
+is unchanged, and written in ``[hh:]mm:ss.mmm`` format otherwise.
+
+.. code-block:: python
+
+    segments = caption.segments
+    segments[1].text = '<b>two</b> '
+    segments[2].start = 2.5  # seconds from the start of the caption
+    caption.segments = segments
+    caption.raw_text  # 'One <00:00:02.000><b>two</b> <00:03.500>three'
+
+An inline timestamp must be within the start and end of the caption and
+after the previous one: reading ``segments`` of a caption with a timestamp
+that is repeated, out of order or out of those bounds, or shaped as a
+timestamp with values that are not valid, raises ``MalformedCaptionError``,
+as does setting segments that do not meet those rules, which leaves the
+text unchanged.
+
+
 Reading WebVTT caption files from a file-like object
 ----------------------------------------------------
 

@@ -10,6 +10,7 @@ Changes that may need updates to the code using the library:
 
 Changes:
 
+* Added ``segments`` to ``Caption`` and the ``CueSegment`` class, the segments of the text between the inline timestamp tags of karaoke-style captions, each with its raw text, its start and end relative to the start of the caption and the tag as written and its position, which can be changed and written back by setting ``segments``
 * Encode all HLS segments before writing any, so an encoding error in a later segment does not create or overwrite earlier segment files.
 
 0.8.0 (08-11-2026)
