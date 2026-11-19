@@ -28,6 +28,7 @@ from .models import (
     _framerate_mapping
     )
 from .errors import MissingFilenameError
+from .styles import CueStyle, cue_styles
 
 DEFAULT_ENCODING = 'utf-8'
 
@@ -904,6 +905,33 @@ class WebVTT:
         captions is sorted in place, so it stays the same list.
         """
         self.captions.sort(key=lambda caption: caption.start_in_milliseconds)
+
+    def cue_styles(self, caption: Caption | int) -> list[CueStyle]:
+        """
+        Return the style of each fragment of a caption.
+
+        The ``::cue`` rules of ``styles`` are evaluated for the fragments
+        of the caption, with the cue tags and the default styles of
+        WebVTT, as `webvtt.styles.cue_styles` does. This tells what a
+        viewer draws for each piece of the text, e.g. whether a word is
+        white or yellow, which the ``STYLE`` text alone does not.
+
+        :param caption: the caption, or its index in ``captions``
+        :returns: the style of each fragment of the caption, in the order
+            of its text
+
+        :raises IndexError: if the index is out of range
+        :raises TypeError: if caption is not a `Caption` or an integer
+        :raises ValueError: if a style sheet nests rules deeper than
+            `webvtt.styles.MAX_NESTING`
+        """
+        if isinstance(caption, int) and not isinstance(caption, bool):
+            return cue_styles(self.captions[caption], self.styles)
+        if not isinstance(caption, Caption):
+            raise TypeError(
+                f'Expected a Caption or an index, got {caption!r}'
+                )
+        return cue_styles(caption, self.styles)
 
     def validate(self) -> list[ValidationIssue]:
         """

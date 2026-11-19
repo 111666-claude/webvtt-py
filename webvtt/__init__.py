@@ -7,10 +7,11 @@ from . import segmenter
 from .models import (  # noqa
     Caption, CueSettings, ParseIssue, Region, Style, ValidationIssue
     )
+from .styles import CueStyle, cue_styles  # noqa
 
 __all__ = [
-    'WebVTT', 'Caption', 'CueSettings', 'ParseIssue', 'Region', 'Style',
-    'ValidationIssue'
+    'WebVTT', 'Caption', 'CueSettings', 'CueStyle', 'ParseIssue', 'Region',
+    'Style', 'ValidationIssue', 'cue_styles'
     ]
 
 read = WebVTT.read

@@ -9,11 +9,15 @@ import functools
 import math
 import re
 import typing
-from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 
 from .errors import MalformedCaptionError, MalformedRegionError
-from .utils import _split_lines
+from .utils import (
+    _iter_cue_text_tokens,
+    _normalize_annotation,
+    _split_lines
+    )
 
 # a context of our own, so rounding does not depend on the decimal context
 # of the caller
@@ -473,35 +477,6 @@ def _frame_rate(value: _FrameRate) -> fractions.Fraction:
     return fractions.Fraction(value)
 
 
-def _iter_cue_text_tokens(
-        text: str
-        ) -> Generator[tuple[str, bool], None, None]:
-    """
-    Iterate the text and the cue tags of cue text.
-
-    A ``<`` without a ``>`` after it is part of the text. The scan stops at
-    the first one, as no later ``<`` in the text has a ``>`` after it
-    either, which keeps it linear in the length of the text.
-
-    :param text: the cue text
-    :returns: tuples of the text or the tag content and true for a tag
-    """
-    pos = 0
-    while True:
-        start = text.find('<', pos)
-        if start < 0:
-            break
-        end = text.find('>', start + 1)
-        if end < 0:
-            break
-        if start > pos:
-            yield text[pos:start], False
-        yield text[start + 1:end], True
-        pos = end + 1
-    if pos < len(text):
-        yield text[pos:], False
-
-
 def _strip_cue_text_tags(text: str) -> str:
     """
     Remove cue tags from cue text.
@@ -528,7 +503,7 @@ def _normalize_voice(name: str) -> str:
     ASCII whitespace is removed and each run of ASCII whitespace is
     replaced with a single space.
     """
-    return _SETTINGS_SEPARATOR.sub(' ', name.strip(' \t\n\f\r'))
+    return _normalize_annotation(name)
 
 
 _PERCENTAGE = re.compile(r'[0-9]+(?:\.[0-9]+)?%')

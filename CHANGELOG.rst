@@ -8,6 +8,10 @@ Changes that may need updates to the code using the library:
 
 * Voice names have leading and trailing ASCII whitespace stripped and runs of ASCII whitespace collapsed to a single space, and cue tags are read across line breaks in ``text``, ``voice`` and ``voices``, joining the lines that a tag spans in ``text`` and in SRT and SBV output (#221, #223)
 
+Changes:
+
+* Added ``cue_styles``, which evaluates the ``::cue`` rules of the styles for the fragments of a cue and returns a ``CueStyle`` with the final colour, background colour and font style of each one, and ``WebVTT.cue_styles`` to evaluate a caption by index or object. It reads ``::cue``, type, class and ``v[voice=...]``/``lang[lang=...]`` selectors with the cascade of CSS, the cue tags and the default styles of WebVTT, ignores CSS that is not valid, and raises ``ValueError`` for style sheets nested deeper than ``webvtt.styles.MAX_NESTING``. The styles and captions are left unchanged, so the captions are still written back as they were read
+
 0.8.0 (08-11-2026)
 ------------------
 

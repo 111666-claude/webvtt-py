@@ -27,6 +27,10 @@ _Path = str | os.PathLike[str]
 # the line number where a block of text starts, from 1, and its lines
 _NumberedBlock = tuple[int, list[str]]
 
+# the characters WebVTT treats as spaces, as in cue tags and settings
+_ASCII_WHITESPACE = ' \t\n\f\r'
+_ASCII_WHITESPACE_RUN = re.compile(f'[{_ASCII_WHITESPACE}]+')
+
 
 def _split_lines(text: str) -> list[str]:
     """
@@ -43,6 +47,50 @@ def _split_lines(text: str) -> list[str]:
     if not lines[-1]:
         lines.pop()
     return lines
+
+
+def _iter_cue_text_tokens(
+        text: str
+        ) -> Generator[tuple[str, bool], None, None]:
+    """
+    Iterate the text and the cue tags of cue text.
+
+    A tag runs from a ``<`` to the next ``>``, so a tag can span line
+    breaks. A ``<`` without a ``>`` after it is part of the text. The scan
+    stops at the first one, as no later ``<`` in the text has a ``>``
+    after it either, which keeps it linear in the length of the text.
+
+    :param text: the cue text
+    :returns: tuples of the text or the tag content and true for a tag
+    """
+    pos = 0
+    while True:
+        start = text.find('<', pos)
+        if start < 0:
+            break
+        end = text.find('>', start + 1)
+        if end < 0:
+            break
+        if start > pos:
+            yield text[pos:start], False
+        yield text[start + 1:end], True
+        pos = end + 1
+    if pos < len(text):
+        yield text[pos:], False
+
+
+def _normalize_annotation(text: str) -> str:
+    """
+    Return a cue tag annotation without extra ASCII whitespace.
+
+    As in the WebVTT start tag annotation state, leading and trailing
+    ASCII whitespace is removed and each run of ASCII whitespace is
+    replaced with a single space.
+
+    :param text: the annotation, as written
+    :returns: the annotation, normalized
+    """
+    return _ASCII_WHITESPACE_RUN.sub(' ', text.strip(_ASCII_WHITESPACE))
 
 
 def _check_errors(errors: str | None) -> None:
@@ -208,3 +256,68 @@ def _iter_numbered_blocks(
 
     if current_text_block:
         yield number + 1 - len(current_text_block), current_text_block
+
+
+def _strip_css_comments(css: str) -> str:
+    """
+    Remove the comments from CSS.
+
+    A comment without an end runs to the end of the CSS. This scans for
+    the comments with ``str.find``, as a non-greedy regex for them rescans
+    the rest of the CSS from every comment start without an end, which is
+    quadratic in the length of the CSS.
+
+    :param css: the CSS text
+    :returns: the CSS without comments
+    """
+    parts = []
+    pos = 0
+    while True:
+        start = css.find('/*', pos)
+        if start < 0:
+            break
+        parts.append(css[pos:start])
+        end = css.find('*/', start + 2)
+        if end < 0:
+            return ''.join(parts)
+        pos = end + 2
+    parts.append(css[pos:])
+    return ''.join(parts)
+
+
+# a character of a CSS identifier, or an escape, as in ``c\+1`` or
+# ``\31 a``. Each character matches one alternative only, and a hex escape
+# takes all its digits, so that a selector that does not match fails in
+# linear time
+_CSS_IDENTIFIER = (
+    r'(?:[a-zA-Z0-9_-]|[^\x00-\x7f]|'
+    r'\\(?:(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{1,5}(?![0-9a-fA-F]))[ \t\n\r\f]?|'
+    r'[^\n\r\f0-9a-fA-F]))+'
+    )
+
+# a class selector of CSS, as in ``.loud``
+_CSS_CLASS = re.compile(rf'\.({_CSS_IDENTIFIER})')
+
+# an escape of CSS, as in ``\+`` or ``\31 a``, with the code point of its
+# hex digits, or else the escaped character
+_CSS_ESCAPE = re.compile(
+    r'\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|(.))', re.DOTALL
+    )
+
+
+def _css_unescape(identifier: str) -> str:
+    r"""
+    Return a CSS identifier without its escapes.
+
+    :param identifier: the identifier, as in ``c\+1`` or ``\31 a``
+    :returns: the identifier, as in ``c+1`` or ``1a``
+    """
+    def unescape(match: re.Match[str]) -> str:
+        if match.group(2) is not None:
+            return match.group(2)
+        code = int(match.group(1), 16)
+        if code == 0 or 0xd800 <= code <= 0xdfff or code > 0x10ffff:
+            return '\ufffd'
+        return chr(code)
+
+    return _CSS_ESCAPE.sub(unescape, identifier)

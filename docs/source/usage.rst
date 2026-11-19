@@ -962,6 +962,72 @@ Updating styles:
     vtt.styles[0].lines[1] = '  color: papayawhip;'
 
 
+Evaluating the style of a cue
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A ``STYLE`` block holds CSS rules, and what a viewer draws for a piece of a
+cue is not in the text alone: a rule may colour a voice, a language or a
+class, and the cue tags and the default styles of WebVTT also apply. The
+``cue_styles`` method evaluates the rules of the styles for the fragments of
+a caption, the text between its cue tags, and returns a ``webvtt.CueStyle``
+for each one with its final colour, background colour and font style. The
+``webvtt.cue_styles`` function evaluates a caption on its own:
+
+.. code-block:: python
+
+    import webvtt
+
+    vtt = webvtt.from_string("""\
+    WEBVTT
+
+    STYLE
+    ::cue(v[voice="Alice"]) {
+      color: #ffff00;
+    }
+    ::cue(.quiet) {
+      color: #808080;
+    }
+
+    00:00:01.000 --> 00:00:02.000
+    <v Alice>Hello <c.quiet>there</c></v>
+    <v Bob>Hi</v>
+    """)
+
+    for fragment in vtt.cue_styles(0):
+        print(fragment.text, fragment.color)
+
+    # 'Hello ' '#ffff00'
+    # 'there' '#808080'
+    # 'Hi' 'rgba(255, 255, 255, 1)'
+
+The supported selectors are ``::cue``, ``::cue()``, and the type, class and
+``[voice=...]`` or ``[lang=...]`` attribute selectors of ``::cue()``, as in
+``::cue(b)``, ``::cue(.loud)``, ``::cue(c.loud.red)``,
+``::cue(v[voice="Esme"])`` or ``::cue(lang[lang="en-US"])``. A rule applies
+to a fragment when its selector matches one of the tags that contains it,
+and ``::cue`` matches every tag. The rule with the most classes and
+attribute selectors applies, then the one with a type selector, and then
+the one that comes last in the styles, as in CSS.
+
+The default styles of WebVTT apply where no rule does: the text is white,
+``b`` is bold, ``i`` is italic and ``u`` is underlined, and the default
+classes, such as ``yellow`` or ``bg_black``, set the colour and the
+background of their tag. The ``color``, ``font-style``, ``font-weight``,
+``font-variant`` and ``text-decoration`` are inherited by the text of a
+tag, while the ``background-color`` is not, so it is transparent unless the
+tag itself sets it. The values are kept as written, so ``red``, ``#ff0000``
+and ``rgb(255, 0, 0)`` are different values although they are the same
+colour.
+
+Rules that are not ``::cue`` rules, whose selector is not supported, such as
+``::cue(c > b)`` or ``::cue(#id)``, or that are not valid CSS are ignored,
+and so are unknown properties and invalid values: reading the styles never
+fails for CSS that is not valid. A style sheet that nests rules deeper than
+``webvtt.styles.MAX_NESTING`` raises ``ValueError``, as such a file cannot
+be read safely. Evaluating the styles leaves the ``STYLE`` blocks and the
+captions unchanged, so the captions are written back as they were read.
+
+
 WebVTT regions
 --------------
 

@@ -1,0 +1,36 @@
+WEBVTT
+
+STYLE
+::cue {
+  color: papayawhip;
+}
+::cue(.loud) {
+  color: #ffff00;
+}
+::cue(.quiet) {
+  color: #808080;
+}
+::cue(.bg_black) {
+  background-color: #000000;
+}
+::cue(b) {
+  color: peachpuff;
+}
+::cue(.loud) {
+  font-weight: bolder;
+}
+::cue(v[voice="Esme"]) {
+  color: cyan;
+}
+::cue(lang[lang="en-US"]) {
+  color: lime;
+}
+
+00:00:00.500 --> 00:00:02.000
+<v Esme><b>Hello</b> <c.loud>world</c></v>
+
+00:00:02.000 --> 00:00:04.000
+<v Mary><c.quiet>Goodbye</c> <lang en-US>friend</lang></v>
+
+00:00:04.000 --> 00:00:06.000
+<c.loud.bg_black>yellow on black</c> plain

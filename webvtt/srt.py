@@ -11,8 +11,14 @@ from .models import (
     ParseIssue,
     Style,
     _caption_from_timings,
-    _iter_cue_text_tokens,
     _skipped_block
+    )
+from .utils import (
+    _CSS_CLASS,
+    _CSS_IDENTIFIER,
+    _css_unescape,
+    _iter_cue_text_tokens,
+    _strip_css_comments
     )
 from .errors import MalformedFileError
 from . import utils
@@ -20,24 +26,9 @@ from . import utils
 
 _TIMESTAMP = r'[0-9]+:[0-9]{1,2}:[0-9]{1,2}[,.][0-9]+'
 
-# a character of a CSS identifier, or an escape, as in ``c\+1`` or ``\31 a``.
-# Each character matches one alternative only, and a hex escape takes all
-# its digits, so that a selector that does not match fails in linear time
-_CSS_IDENTIFIER = (
-    r'(?:[a-zA-Z0-9_-]|[^\x00-\x7f]|'
-    r'\\(?:(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{1,5}(?![0-9a-fA-F]))[ \t\n\r\f]?|'
-    r'[^\n\r\f0-9a-fA-F]))+'
-    )
-
 # a ::cue() selector with a type, classes or both, as in ::cue(c.loud)
 _CUE_SELECTOR = re.compile(
     rf'::cue\(\s*([a-zA-Z]+)?((?:\.{_CSS_IDENTIFIER})*)\s*\)'
-    )
-
-_CSS_CLASS = re.compile(rf'\.({_CSS_IDENTIFIER})')
-
-_CSS_ESCAPE = re.compile(
-    r'\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|(.))', re.DOTALL
     )
 
 # the selectors of a rule, split on the commas that are not escaped
@@ -537,33 +528,6 @@ def _position_tag(settings: CueSettings) -> str:
     return '' if number == 2 else f'{{\\an{number}}}'
 
 
-def _strip_css_comments(css: str) -> str:
-    """
-    Remove the comments from CSS.
-
-    A comment without an end runs to the end of the CSS. This scans for
-    the comments with ``str.find``, as a non-greedy regex for them rescans
-    the rest of the CSS from every comment start without an end, which is
-    quadratic in the length of the CSS.
-
-    :param css: the CSS text
-    :returns: the CSS without comments
-    """
-    parts = []
-    pos = 0
-    while True:
-        start = css.find('/*', pos)
-        if start < 0:
-            break
-        parts.append(css[pos:start])
-        end = css.find('*/', start + 2)
-        if end < 0:
-            return ''.join(parts)
-        pos = end + 2
-    parts.append(css[pos:])
-    return ''.join(parts)
-
-
 def _css_colour(declarations: str) -> str | None:
     """
     Return the colour in the declarations of a CSS rule.
@@ -636,24 +600,6 @@ def _colour_rule(
     # the specificity of CSS: the classes, then the tag name
     priority = (len(class_names), int(name is not None), position)
     return _ColourRule(name and name.lower(), class_names, priority, colour)
-
-
-def _css_unescape(identifier: str) -> str:
-    r"""
-    Return a CSS identifier without its escapes.
-
-    :param identifier: the identifier, as in ``c\+1`` or ``\31 a``
-    :returns: the identifier, as in ``c+1`` or ``1a``
-    """
-    def unescape(match: re.Match[str]) -> str:
-        if match.group(2) is not None:
-            return match.group(2)
-        code = int(match.group(1), 16)
-        if code == 0 or 0xd800 <= code <= 0xdfff or code > 0x10ffff:
-            return '\ufffd'
-        return chr(code)
-
-    return _CSS_ESCAPE.sub(unescape, identifier)
 
 
 def _tag_colour(
